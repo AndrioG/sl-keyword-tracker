@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SL Keyword Tracker</title>
+
+<!-- Chart.js for graphs -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- PapaParse for CSV parsing -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<!-- DataTables for the mention table -->
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; padding: 20px;
+    background: #f4f6f8; color: #222;
+  }
+  h1 { margin: 0 0 4px 0; font-size: 28px; }
+  .subtitle { color: #666; font-size: 14px; margin-bottom: 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .card {
+    background: #fff; border-radius: 8px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  .card h2 { margin: 0 0 12px 0; font-size: 15px; color: #555; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 32px; font-weight: 700; color: #1a73e8; }
+  .stat-label { font-size: 13px; color: #666; margin-top: 4px; }
+  .chart-container { position: relative; height: 260px; }
+  .chart-container-wide { position: relative; height: 320px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; align-items: center; }
+  .filters label { font-size: 13px; color: #555; }
+  .filters select, .filters input {
+    padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;
+  }
+  table.dataTable { font-size: 13px; }
+  table.dataTable td { vertical-align: top; padding: 8px; }
+  table.dataTable a { color: #1a73e8; text-decoration: none; }
+  table.dataTable a:hover { text-decoration: underline; }
+  .lang-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+  }
+  .lang-en { background: #e3f2fd; color: #1565c0; }
+  .lang-si { background: #fff3e0; color: #e65100; }
+  .lang-ta { background: #f3e5f5; color: #6a1b9a; }
+  .loading { text-align: center; padding: 40px; color: #666; }
+  .footer { text-align: center; color: #888; font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<h1>Sri Lanka Keyword Tracker</h1>
+<div class="subtitle" id="subtitle">Loading…</div>
+
+<div id="loading" class="loading">Fetching data from Google Sheet…</div>
+
+<div id="dashboard" style="display:none;">
+
+  <div class="filters">
+    <label>Days: 
+      <select id="dayFilter">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+        <option value="all">All time</option>
+      </select>
+    </label>
+    <label>Keyword: 
+      <select id="keywordFilter"><option value="">All</option></select>
+    </label>
+    <label>Language: 
+      <select id="langFilter">
+        <option value="">All</option>
+        <option value="en">English</option>
+        <option value="si">Sinhala</option>
+        <option value="ta">Tamil</option>
+      </select>
+    </label>
+    <label>Source type: 
+      <select id="sourceTypeFilter">
+        <option value="">All</option>
+        <option value="gnews">Google News</option>
+        <option value="rss">Site RSS</option>
+      </select>
+    </label>
+  </div>
+
+  <!-- Top-line stats -->
+  <div class="grid">
+    <div class="card">
+      <h2>Total mentions</h2>
+      <div class="stat-value" id="statTotal">–</div>
+      <div class="stat-label" id="statTotalLabel">in selected period</div>
+    </div>
+    <div class="card">
+      <h2>Unique sources</h2>
+      <div class="stat-value" id="statSources">–</div>
+      <div class="stat-label">distinct publishers</div>
+    </div>
+    <div class="card">
+      <h2>Most tracked keyword</h2>
+      <div class="stat-value" id="statTopKeyword" style="font-size:20px;">–</div>
+      <div class="stat-label" id="statTopKeywordCount"></div>
+    </div>
+    <div class="card">
+      <h2>Languages covered</h2>
+      <div class="stat-value" id="statLangs">–</div>
+      <div class="stat-label" id="statLangsBreakdown"></div>
+    </div>
+  </div>
+
+  <!-- Time series chart -->
+  <div class="card" style="margin-bottom:16px;">
+    <h2>Mentions over time</h2>
+    <div class="chart-container-wide"><canvas id="timeChart"></canvas></div>
+  </div>
+
+  <!-- Breakdown charts -->
+  <div class="grid">
+    <div class="card">
+      <h2>By language</h2>
+      <div class="chart-container"><canvas id="langChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>By keyword</h2>
+      <div class="chart-container"><canvas id="keywordChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Top sources</h2>
+      <div class="chart-container"><canvas id="sourceChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Mentions table -->
+  <div class="card">
+    <h2>All mentions</h2>
+    <table id="mentionsTable" class="display" style="width:100%">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Keyword</th>
+          <th>Lang</th>
+          <th>Title</th>
+          <th>Source</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+</div>
+
+<div class="footer">
+  Data refreshes automatically every 15 minutes. Last updated: <span id="lastUpdate">–</span>
+</div>
+
+<script>
+// ============================================================
+// CONFIG — paste your published CSV URLs here
+// ============================================================
+const RAW_MENTIONS_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSfiQhuPyWaxq7R9d-qTOBcaQ9MF0bcYBtGHwFTrEmfwr1eVmK_nHk2IXnptEyhWH7HA_Z6Z_tYGjIL/pub?gid=1264163167&single=true&output=csv";
+const KEYWORDS_CSV     = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSfiQhuPyWaxq7R9d-qTOBcaQ9MF0bcYBtGHwFTrEmfwr1eVmK_nHk2IXnptEyhWH7HA_Z6Z_tYGjIL/pub?gid=0&single=true&output=csv";
+const AUTO_REFRESH_MS  = 15 * 60 * 1000;  // 15 minutes
+
+// ============================================================
+// STATE
+// ============================================================
+let allMentions = [];
+let keywordMap = {};   // id -> english name
+let charts = {};
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function parseDate(str) {
+  if (!str) return null;
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDate(d) {
+  return d.toISOString().substring(0, 10);
+}
+function unwrapGoogleNewsTitle(title) {
+  if (!title) return { title: '', source: '' };
+  const lastDash = title.lastIndexOf(' - ');
+  if (lastDash > 0 && lastDash > title.length - 60) {
+    return { title: title.substring(0, lastDash).trim(), source: title.substring(lastDash + 3).trim() };
+  }
+  return { title: title, source: '' };
+}
+
+// ============================================================
+// LOAD DATA
+// ============================================================
+async function loadCsv(url) {
+  return new Promise((resolve, reject) => {
+    Papa.parse(url, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: r => resolve(r.data),
+      error: e => reject(e)
+    });
+  });
+}
+
+async function loadAll() {
+  try {
+    const [mentions, keywords] = await Promise.all([
+      loadCsv(RAW_MENTIONS_CSV),
+      loadCsv(KEYWORDS_CSV)
+    ]);
+    
+    keywordMap = {};
+    keywords.forEach(k => {
+      if (k.id) keywordMap[k.id] = k.english || ('Keyword ' + k.id);
+    });
+    
+    allMentions = mentions.map(m => {
+      const dateFound = parseDate(m.date_found);
+      const pubDate = parseDate(m.published_date);
+      const displayDate = pubDate || dateFound;
+      let title = m.title || '';
+      let sourceDomain = m.source_domain || '';
+      // For Google News rows, unwrap the "Title - Source" pattern
+      if (m.source_type === 'gnews') {
+        const parts = unwrapGoogleNewsTitle(title);
+        title = parts.title;
+        if (parts.source && (!sourceDomain || sourceDomain === 'news.google.com')) {
+          sourceDomain = parts.source;
+        }
+      }
+      return {
+        date: displayDate,
+        keyword_id: m.keyword_id,
+        keyword_name: keywordMap[m.keyword_id] || m.keyword_matched || 'Unknown',
+        keyword_matched: m.keyword_matched,
+        language: m.language || '',
+        title: title,
+        url: m.url || '',
+        source_domain: sourceDomain,
+        source_type: m.source_type || ''
+      };
+    }).filter(m => m.date !== null);
+    
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+    document.getElementById('subtitle').textContent =
+      allMentions.length + ' total mentions tracked · auto-refreshes every 15 min';
+    
+    populateKeywordFilter();
+    render();
+  } catch (e) {
+    document.getElementById('loading').innerHTML =
+      '<b>Could not load data.</b><br>Check the CSV URLs are published and correct.<br><small>' + e + '</small>';
+  }
+}
+
+// ============================================================
+// FILTERING
+// ============================================================
+function applyFilters() {
+  const days = document.getElementById('dayFilter').value;
+  const keyword = document.getElementById('keywordFilter').value;
+  const lang = document.getElementById('langFilter').value;
+  const stype = document.getElementById('sourceTypeFilter').value;
+  
+  let cutoff = null;
+  if (days !== 'all') cutoff = new Date(Date.now() - parseInt(days, 10) * 86400000);
+  
+  return allMentions.filter(m => {
+    if (cutoff && m.date < cutoff) return false;
+    if (keyword && m.keyword_id !== keyword) return false;
+    if (lang && m.language !== lang) return false;
+    if (stype && m.source_type !== stype) return false;
+    return true;
+  });
+}
+
+function populateKeywordFilter() {
+  const sel = document.getElementById('keywordFilter');
+  const ids = Object.keys(keywordMap).sort((a, b) => parseInt(a) - parseInt(b));
+  ids.forEach(id => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = keywordMap[id];
+    sel.appendChild(opt);
+  });
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  const data = applyFilters();
+  renderStats(data);
+  renderTimeChart(data);
+  renderLangChart(data);
+  renderKeywordChart(data);
+  renderSourceChart(data);
+  renderTable(data);
+}
+
+function renderStats(data) {
+  document.getElementById('statTotal').textContent = data.length.toLocaleString();
+  
+  const sources = new Set(data.map(m => m.source_domain).filter(Boolean));
+  document.getElementById('statSources').textContent = sources.size;
+  
+  const kwCount = {};
+  data.forEach(m => { kwCount[m.keyword_name] = (kwCount[m.keyword_name] || 0) + 1; });
+  const topKw = Object.entries(kwCount).sort((a, b) => b[1] - a[1])[0];
+  if (topKw) {
+    document.getElementById('statTopKeyword').textContent = topKw[0];
+    document.getElementById('statTopKeywordCount').textContent = topKw[1].toLocaleString() + ' mentions';
+  } else {
+    document.getElementById('statTopKeyword').textContent = '–';
+    document.getElementById('statTopKeywordCount').textContent = '';
+  }
+  
+  const langCount = {};
+  data.forEach(m => { langCount[m.language] = (langCount[m.language] || 0) + 1; });
+  const langs = Object.keys(langCount).filter(l => l);
+  document.getElementById('statLangs').textContent = langs.length;
+  document.getElementById('statLangsBreakdown').textContent =
+    langs.map(l => l.toUpperCase() + ': ' + langCount[l]).join(' · ');
+}
+
+function renderTimeChart(data) {
+  const byDay = {};
+  data.forEach(m => {
+    const day = fmtDate(m.date);
+    byDay[day] = (byDay[day] || 0) + 1;
+  });
+  const days = Object.keys(byDay).sort();
+  const counts = days.map(d => byDay[d]);
+  
+  if (charts.time) charts.time.destroy();
+  charts.time = new Chart(document.getElementById('timeChart'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [{
+        label: 'Mentions per day',
+        data: counts,
+        borderColor: '#1a73e8',
+        backgroundColor: 'rgba(26,115,232,0.1)',
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  });
+}
+
+function renderLangChart(data) {
+  const count = { en: 0, si: 0, ta: 0 };
+  data.forEach(m => { if (count[m.language] !== undefined) count[m.language]++; });
+  
+  if (charts.lang) charts.lang.destroy();
+  charts.lang = new Chart(document.getElementById('langChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['English', 'Sinhala', 'Tamil'],
+      datasets: [{
+        data: [count.en, count.si, count.ta],
+        backgroundColor: ['#1565c0', '#e65100', '#6a1b9a']
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+}
+
+function renderKeywordChart(data) {
+  const kwCount = {};
+  data.forEach(m => { kwCount[m.keyword_name] = (kwCount[m.keyword_name] || 0) + 1; });
+  const entries = Object.entries(kwCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  
+  if (charts.kw) charts.kw.destroy();
+  charts.kw = new Chart(document.getElementById('keywordChart'), {
+    type: 'bar',
+    data: {
+      labels: entries.map(e => e[0]),
+      datasets: [{
+        data: entries.map(e => e[1]),
+        backgroundColor: '#1a73e8'
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+function renderSourceChart(data) {
+  const srcCount = {};
+  data.forEach(m => { if (m.source_domain) srcCount[m.source_domain] = (srcCount[m.source_domain] || 0) + 1; });
+  const entries = Object.entries(srcCount).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  
+  if (charts.src) charts.src.destroy();
+  charts.src = new Chart(document.getElementById('sourceChart'), {
+    type: 'bar',
+    data: {
+      labels: entries.map(e => e[0]),
+      datasets: [{
+        data: entries.map(e => e[1]),
+        backgroundColor: '#34a853'
+      }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+function renderTable(data) {
+  const sorted = [...data].sort((a, b) => b.date - a.date);
+  const rows = sorted.map(m => [
+    fmtDate(m.date),
+    m.keyword_name,
+    '<span class="lang-badge lang-' + m.language + '">' + m.language + '</span>',
+    m.url ? '<a href="' + m.url + '" target="_blank" rel="noopener">' + (m.title || m.url) + '</a>' : (m.title || ''),
+    m.source_domain || '–',
+    m.source_type || ''
+  ]);
+  
+  if ($.fn.DataTable.isDataTable('#mentionsTable')) {
+    $('#mentionsTable').DataTable().clear().rows.add(rows).draw();
+  } else {
+    $('#mentionsTable').DataTable({
+      data: rows,
+      pageLength: 25,
+      order: [[0, 'desc']]
+    });
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+document.getElementById('dayFilter').addEventListener('change', render);
+document.getElementById('keywordFilter').addEventListener('change', render);
+document.getElementById('langFilter').addEventListener('change', render);
+document.getElementById('sourceTypeFilter').addEventListener('change', render);
+
+loadAll();
+setInterval(loadAll, AUTO_REFRESH_MS);
+</script>
+
+</body>
+</html>
